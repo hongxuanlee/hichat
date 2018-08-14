@@ -1,9 +1,12 @@
 package message
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
 )
 
@@ -11,12 +14,12 @@ import (
 *  send and receive message
 **/
 const (
-	MessageType_Connect    = 0
-	MessageType_Connected  = 1
-	MessageType_Disconnect = 2
-	MessageType_Private    = 3
-	MessageType_Recieved   = 4
-	MessageType_Error      = 5
+	MessageType_Connect    = 1
+	MessageType_Connected  = 2
+	MessageType_Disconnect = 3
+	MessageType_Private    = 4
+	MessageType_Recieved   = 5
+	MessageType_Error      = 6
 )
 
 const BUFFER_SIZE = 4096
@@ -36,37 +39,83 @@ type Message struct {
 	MsgContent string
 }
 
+func (msg *Message) desp() string {
+	return fmt.Sprintf("type: %d, username: %s, content: %s", msg.Type, msg.Username, msg.MsgContent)
+}
+
 //HandleRquest: handle request from client to server
-func HandleRequest(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder) {
+func HandleRequest(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder, c chan Message) {
 	var msg Message
 	decoder.Decode(&msg)
-	receiveMessage(&msg, conn, encoder)
-	return
+	receiveMessage(&msg, conn, encoder, c)
 }
 
-func ServConn(conn net.Conn) {
+func InitUsername(name string) {
+	fmt.Println("myname is", name)
+	username = name
+}
+
+func ServeConn(conn net.Conn) {
+	msgChan := make(chan Message)
 	encoder := json.NewEncoder(conn)
 	decoder := json.NewDecoder(conn)
-	for {
-		HandleRequest(conn, decoder, encoder)
-	}
+
+	go func() {
+		for {
+			HandleRequest(conn, decoder, encoder, msgChan)
+		}
+	}()
 	// close until interupt
-	conn.Close()
+	//	conn.Close()
+
+	go func() {
+		handleMessage(msgChan)
+	}()
+
+	for {
+		// read in input from stdin
+		reader := bufio.NewReader(os.Stdin)
+		//fmt.Printf("You: ")
+		text, _ := reader.ReadString('\n')
+		// send to peer
+		sendMessage(text, encoder)
+	}
+
 }
 
-func (msg *Message) sendMessage(receiver string) {
-	peerConnection := listConnections[receiver]
-	enc := json.NewEncoder(peerConnection)
-	enc.Encode(msg)
+func handleMessage(c chan Message) {
+	var err error
+	var received Message
+	for err == nil {
+		received = <-c
+		fmt.Printf("%s: %s \n", received.Username, received.MsgContent)
+	}
 }
 
-func receiveMessage(msg *Message, conn net.Conn, encoder *json.Encoder) {
+func sendMessage(txt string, encoder *json.Encoder) {
+	msg := Message{MessageType_Private, username, txt}
+	encoder.Encode(msg)
+}
+
+func handleError(msg *Message) {
+	log.Print(msg.desp())
+}
+
+func receiveMessage(msg *Message, conn net.Conn, encoder *json.Encoder, c chan Message) {
 	switch msg.Type {
+	case MessageType_Error:
+		handleError(msg)
 	case MessageType_Connect:
 		handleNewConnect(*msg, conn, encoder)
+	case MessageType_Connected:
+		addConnect(*msg, conn)
 	case MessageType_Disconnect:
-		disconnect(*msg)
+		disconnect(*msg, conn)
+	case MessageType_Recieved:
+	//	fmt.Printf("%s received \n", msg.Username)
 	case MessageType_Private:
+		//fmt.Println("receive private msg", msg.desp())
+		c <- *msg
 		received := Message{
 			MessageType_Recieved,
 			username,
@@ -74,7 +123,7 @@ func receiveMessage(msg *Message, conn net.Conn, encoder *json.Encoder) {
 		}
 		encoder.Encode(received)
 	default:
-		log.Println("unrecongnized type: %d", msg.Type)
+		log.Printf("unrecongnized type: %d \n", msg.Type)
 	}
 }
 
@@ -92,7 +141,7 @@ func handleNewConnect(msg Message, conn net.Conn, encoder *json.Encoder) bool {
 	if userExist(msg.Username) {
 		response.Type = MessageType_Error
 		response.Username = username
-		response.MsgContent = "Username already taken, choose another one that is not in the list"
+		response.MsgContent = "Username already taken"
 		encoder.Encode(response)
 		return false
 	}
@@ -100,18 +149,33 @@ func handleNewConnect(msg Message, conn net.Conn, encoder *json.Encoder) bool {
 	listIPs[msg.Username] = conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	listConnections[msg.Username] = conn
 	mutex.Unlock()
-	log.Println(listConnections)
+	log.Printf("new connected request from username: %s. ip: %s \n", msg.Username, listIPs[msg.Username])
 	response.Type = MessageType_Connected
 	response.Username = username
 	encoder.Encode(response)
 	return true
 }
 
+func sendConnect(encoder *json.Encoder) {
+	fmt.Println("send connect, username: ", username)
+	msg := Message{MessageType_Connect, username, ""}
+	encoder.Encode(msg)
+}
+
+func addConnect(msg Message, conn net.Conn) {
+	mutex.Lock()
+	listIPs[msg.Username] = conn.RemoteAddr().(*net.TCPAddr).IP.String()
+	listConnections[msg.Username] = conn
+	log.Printf("connected confirm from username: %s. ip: %s \n", msg.Username, listIPs[msg.Username])
+	mutex.Unlock()
+}
+
 //disconnect user by deleting him/her from list
-func disconnect(msg Message) {
+func disconnect(msg Message, conn net.Conn) {
+	// update list
 	mutex.Lock()
 	delete(listIPs, msg.Username)
 	delete(listConnections, msg.Username)
 	mutex.Unlock()
-	// update list
+	conn.Close()
 }
