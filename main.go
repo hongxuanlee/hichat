@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	msg "github.com/hongxuanlee/hichat/message"
+	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
 const PORT = 2500
@@ -36,29 +37,49 @@ func main() {
 		servePort = PORT
 	}
 
-	serve, err := net.Listen("tcp", ":"+strconv.Itoa(servePort))
-	handleErr(err)
-	fmt.Printf("listen to port : %d \n", servePort)
-	// server side
+	// create new shell.
+	// by default, new shell includes 'exit', 'help' and 'clear' commands.
+	shell := ishell.New()
 
-	//defer serve.Close()
+	// display welcome info.
+	shell.Println("I am the cutest chatter")
 
-	// whether dial other peer
-	if len(os.Args) > 4 {
-		go func() {
+	// register a function for "call" command.
+	shell.AddCmd(&ishell.Cmd{
+		Name: "call",
+		Help: "call addr(x.x.x.x:2500)",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) < 0 {
+				c.Println("call addr required")
+			}
+			addr := c.Args[0]
+			msg.Dial(addr, c)
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "wait",
+		Help: "wait for another dial",
+		Func: func(c *ishell.Context) {
+			serve, err := net.Listen("tcp", ":"+strconv.Itoa(servePort))
+			handleErr(err)
+			c.Printf("listen to port : %d \n", servePort)
+			// server side
 			for {
 				conn, err := serve.Accept()
 				handleErr(err)
-				msg.ServeConn(conn)
+				txtChan := make(chan string)
+				msg.ServeConn(conn, c, txtChan)
+				c.Print("you: ")
+				txt := c.ReadLine()
+				txtChan <- txt
+				if txt == "exit" {
+					break
+				}
 			}
-		}()
-		dialAddr := os.Args[4]
-		msg.Dial(dialAddr)
-	} else {
-		for {
-			conn, err := serve.Accept()
-			handleErr(err)
-			msg.ServeConn(conn)
-		}
-	}
+		},
+	})
+
+	// run shell
+	shell.Run()
 }

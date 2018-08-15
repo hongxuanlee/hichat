@@ -1,13 +1,13 @@
 package message
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"sync"
+
+	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
 /**
@@ -51,44 +51,41 @@ func HandleRequest(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder, 
 }
 
 func InitUsername(name string) {
-	fmt.Println("myname is", name)
+	fmt.Println("Myname is", name)
 	username = name
 }
 
-func ServeConn(conn net.Conn) {
+func ServeConn(conn net.Conn, c *ishell.Context, sendTxt chan string) {
 	msgChan := make(chan Message)
 	encoder := json.NewEncoder(conn)
 	decoder := json.NewDecoder(conn)
-
 	go func() {
 		for {
 			HandleRequest(conn, decoder, encoder, msgChan)
 		}
 	}()
-	// close until interupt
-	//	conn.Close()
 
 	go func() {
-		handleMessage(msgChan)
+		handleMessage(msgChan, c)
 	}()
 
 	for {
-		// read in input from stdin
-		reader := bufio.NewReader(os.Stdin)
-		//fmt.Printf("You: ")
-		text, _ := reader.ReadString('\n')
-		// send to peer
-		sendMessage(text, encoder)
+		txt := <-sendTxt
+		if txt == "exit" {
+			break
+		}
+		sendMessage(txt, encoder)
 	}
 
+	conn.Close()
 }
 
-func handleMessage(c chan Message) {
+func handleMessage(c chan Message, ctx *ishell.Context) {
 	var err error
 	var received Message
 	for err == nil {
 		received = <-c
-		fmt.Printf("%s: %s \n", received.Username, received.MsgContent)
+		ctx.Printf("%s: %s \n", received.Username, received.MsgContent)
 	}
 }
 

@@ -1,15 +1,15 @@
 package message
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
+
+	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
 // dial ip
-func Dial(address string) {
+func Dial(address string, c *ishell.Context) {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		fmt.Printf("dial %s error, err: %s \n", address, err)
@@ -23,7 +23,7 @@ func Dial(address string) {
 	msgChan := make(chan Message)
 
 	go func() {
-		handleMessage(msgChan)
+		handleMessage(msgChan, c)
 	}()
 
 	go func() {
@@ -33,11 +33,12 @@ func Dial(address string) {
 	}()
 
 	for {
-		// read in input from stdin
-		reader := bufio.NewReader(os.Stdin)
-		//	fmt.Print("Text to send: ")
-		text, _ := reader.ReadString('\n')
-		// send to peer
-		sendMessage(text, encoder)
+		c.Print("you: ")
+		txt := c.ReadLine()
+		sendMessage(txt, encoder)
+		if txt == "exit" {
+			break
+		}
+		c.Println("Hello", txt)
 	}
 }
