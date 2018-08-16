@@ -6,8 +6,6 @@ import (
 	"log"
 	"net"
 	"sync"
-
-	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
 /**
@@ -39,53 +37,65 @@ type Message struct {
 	MsgContent string
 }
 
+type Session struct {
+	Myname      string
+	username    string
+	ReceivedMsg chan string
+	InputMsg    chan string
+}
+
 func (msg *Message) desp() string {
 	return fmt.Sprintf("type: %d, username: %s, content: %s", msg.Type, msg.Username, msg.MsgContent)
 }
 
-//HandleRquest: handle request from client to server
-func HandleRequest(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder, c chan Message) {
-	var msg Message
-	decoder.Decode(&msg)
-	receiveMessage(&msg, conn, encoder, c)
-}
-
-func InitUsername(name string) {
-	fmt.Println("Myname is", name)
+func InitSession(name string) *Session {
+	session := &Session{
+		Myname:      name,
+		ReceivedMsg: make(chan string),
+		InputMsg:    make(chan string),
+	}
 	username = name
+	return session
 }
 
-func ServeConn(conn net.Conn, c *ishell.Context, sendTxt chan string) {
-	msgChan := make(chan Message)
+func (session *Session) ServeConn(conn net.Conn) {
 	encoder := json.NewEncoder(conn)
 	decoder := json.NewDecoder(conn)
 	go func() {
 		for {
-			HandleRequest(conn, decoder, encoder, msgChan)
+			session.HandleRequest(conn, decoder, encoder)
 		}
 	}()
 
-	go func() {
-		handleMessage(msgChan, c)
-	}()
+	go session.handleSendMessage(conn, encoder)
+}
 
+//HandleRquest: handle request from client to server
+func (session *Session) HandleRequest(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder) {
+	var msg Message
+	decoder.Decode(&msg)
+	session.receiveMessage(&msg, conn, encoder)
+}
+
+func (session *Session) handleReceivedMessage(msg Message) {
+	session.ReceivedMsg <- fmt.Sprintf("%s: %s \n", msg.Username, msg.MsgContent)
+}
+
+func (session *Session) handleSendMessage(conn net.Conn, encoder *json.Encoder) {
 	for {
-		txt := <-sendTxt
+		txt := <-session.InputMsg
 		if txt == "exit" {
+			session.ReceivedMsg <- fmt.Sprintf("you exit session")
+			disconMsg := Message{
+				MessageType_Disconnect,
+				username,
+				"",
+			}
+			encoder.Encode(disconMsg)
+			conn.Close()
 			break
 		}
 		sendMessage(txt, encoder)
-	}
-
-	conn.Close()
-}
-
-func handleMessage(c chan Message, ctx *ishell.Context) {
-	var err error
-	var received Message
-	for err == nil {
-		received = <-c
-		ctx.Printf("%s: %s \n", received.Username, received.MsgContent)
 	}
 }
 
@@ -98,7 +108,7 @@ func handleError(msg *Message) {
 	log.Print(msg.desp())
 }
 
-func receiveMessage(msg *Message, conn net.Conn, encoder *json.Encoder, c chan Message) {
+func (session *Session) receiveMessage(msg *Message, conn net.Conn, encoder *json.Encoder) {
 	switch msg.Type {
 	case MessageType_Error:
 		handleError(msg)
@@ -107,12 +117,12 @@ func receiveMessage(msg *Message, conn net.Conn, encoder *json.Encoder, c chan M
 	case MessageType_Connected:
 		addConnect(*msg, conn)
 	case MessageType_Disconnect:
-		disconnect(*msg, conn)
+		session.disconnect(*msg, conn)
 	case MessageType_Recieved:
 	//	fmt.Printf("%s received \n", msg.Username)
 	case MessageType_Private:
 		//fmt.Println("receive private msg", msg.desp())
-		c <- *msg
+		session.handleReceivedMessage(*msg)
 		received := Message{
 			MessageType_Recieved,
 			username,
@@ -120,7 +130,9 @@ func receiveMessage(msg *Message, conn net.Conn, encoder *json.Encoder, c chan M
 		}
 		encoder.Encode(received)
 	default:
-		log.Printf("unrecongnized type: %d \n", msg.Type)
+		if msg.Type != 0 {
+			log.Printf("unrecongnized type: %d \n", msg.Type)
+		}
 	}
 }
 
@@ -168,8 +180,9 @@ func addConnect(msg Message, conn net.Conn) {
 }
 
 //disconnect user by deleting him/her from list
-func disconnect(msg Message, conn net.Conn) {
+func (session *Session) disconnect(msg Message, conn net.Conn) {
 	// update list
+	session.ReceivedMsg <- fmt.Sprintf("%s exit session, session close.", msg.Username)
 	mutex.Lock()
 	delete(listIPs, msg.Username)
 	delete(listConnections, msg.Username)

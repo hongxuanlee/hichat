@@ -2,17 +2,17 @@ package message
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
-
-	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
 // dial ip
-func Dial(address string, c *ishell.Context) {
+func Dial(address string, session *Session) error {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		fmt.Printf("dial %s error, err: %s \n", address, err)
+		return errors.New("dial error")
 	}
 
 	encoder := json.NewEncoder(conn)
@@ -20,25 +20,13 @@ func Dial(address string, c *ishell.Context) {
 
 	sendConnect(encoder)
 
-	msgChan := make(chan Message)
-
-	go func() {
-		handleMessage(msgChan, c)
-	}()
-
 	go func() {
 		for {
-			HandleRequest(conn, decoder, encoder, msgChan)
+			session.HandleRequest(conn, decoder, encoder)
 		}
+		conn.Close()
 	}()
 
-	for {
-		c.Print("you: ")
-		txt := c.ReadLine()
-		sendMessage(txt, encoder)
-		if txt == "exit" {
-			break
-		}
-		c.Println("Hello", txt)
-	}
+	go session.handleSendMessage(conn, encoder)
+	return nil
 }
