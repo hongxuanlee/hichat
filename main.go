@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"time"
 
 	msg "github.com/hongxuanlee/hichat/message"
 	ishell "gopkg.in/abiosoft/ishell.v2"
@@ -25,7 +26,6 @@ func main() {
 		os.Exit(1)
 	}
 	username := os.Args[2]
-	session := msg.InitSession(username)
 	var servePort int
 	var err error
 	if len(os.Args) > 3 {
@@ -51,10 +51,36 @@ func main() {
 				c.Println("call addr required")
 			}
 			addr := c.Args[0]
-			err := msg.Dial(addr, session)
+			conn, err := msg.Dial(addr)
 			if err != nil {
-				return
+				c.Print("dial tcp address %s error, %s", addr, err)
 			}
+
+			session := msg.InitSession(username, conn)
+			session.SendConnect()
+			var didReceived bool
+			// if still not received response after 3s
+			go func() {
+				time.Sleep(3 * time.Second)
+				if !didReceived {
+					session.Connection.conn.Close()
+				}
+			}()
+			received := <-session.ReceivedMsg
+
+			if received == "connected" {
+				didReceived = true
+			}
+
+			go func() {
+				for {
+					session.HandleRequest(conn, decoder, encoder)
+				}
+				conn.Close()
+			}()
+
+			go session.handleSendMessage(conn, encoder)
+
 			go func() {
 				for {
 					received := <-session.ReceivedMsg

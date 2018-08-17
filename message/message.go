@@ -20,8 +20,6 @@ const (
 	MessageType_Error      = 6
 )
 
-const BUFFER_SIZE = 4096
-
 var (
 	output          chan string         = make(chan string)         //channel waitin on the user to type something
 	listIPs         map[string]string   = make(map[string]string)   // username -> ip
@@ -42,17 +40,36 @@ type Session struct {
 	username    string
 	ReceivedMsg chan string
 	InputMsg    chan string
+	Connection  *Connection
+}
+
+type Connection struct {
+	conn    net.Conn
+	encoder *json.Encoder
+	decoder *json.Decoder
+}
+
+// dial ip
+func Dial(address string) (conn net.Conn, err error) {
+	conn, err = net.Dial("tcp", address)
+	return
 }
 
 func (msg *Message) desp() string {
 	return fmt.Sprintf("type: %d, username: %s, content: %s", msg.Type, msg.Username, msg.MsgContent)
 }
 
-func InitSession(name string) *Session {
+func InitSession(name string, conn net.Conn) *Session {
+	connection := &Connection{
+		conn:    conn,
+		encoder: json.NewEncoder(conn),
+		decoder: json.NewDecoder(conn),
+	}
 	session := &Session{
 		Myname:      name,
 		ReceivedMsg: make(chan string),
 		InputMsg:    make(chan string),
+		Connection:  connection,
 	}
 	username = name
 	return session
@@ -113,9 +130,9 @@ func (session *Session) receiveMessage(msg *Message, conn net.Conn, encoder *jso
 	case MessageType_Error:
 		handleError(msg)
 	case MessageType_Connect:
-		handleNewConnect(*msg, conn, encoder)
+		session.handleNewConnect(*msg, conn, encoder)
 	case MessageType_Connected:
-		addConnect(*msg, conn)
+		session.addConnect(*msg, conn)
 	case MessageType_Disconnect:
 		session.disconnect(*msg, conn)
 	case MessageType_Recieved:
@@ -131,7 +148,7 @@ func (session *Session) receiveMessage(msg *Message, conn net.Conn, encoder *jso
 		encoder.Encode(received)
 	default:
 		if msg.Type != 0 {
-			log.Printf("unrecongnized type: %d \n", msg.Type)
+			fmt.Printf("unrecongnized type: %d \n", msg.Type)
 		}
 	}
 }
@@ -145,7 +162,7 @@ func userExist(username string) bool {
 	return false
 }
 
-func handleNewConnect(msg Message, conn net.Conn, encoder *json.Encoder) bool {
+func (session *Session) handleNewConnect(msg Message, conn net.Conn, encoder *json.Encoder) bool {
 	response := Message{}
 	if userExist(msg.Username) {
 		response.Type = MessageType_Error
@@ -158,25 +175,26 @@ func handleNewConnect(msg Message, conn net.Conn, encoder *json.Encoder) bool {
 	listIPs[msg.Username] = conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	listConnections[msg.Username] = conn
 	mutex.Unlock()
-	log.Printf("new connected request from username: %s. ip: %s \n", msg.Username, listIPs[msg.Username])
+	fmt.Printf("new connected request from username: %s. ip: %s \n", msg.Username, listIPs[msg.Username])
 	response.Type = MessageType_Connected
 	response.Username = username
 	encoder.Encode(response)
 	return true
 }
 
-func sendConnect(encoder *json.Encoder) {
+func (session *Session) SendConnect() {
 	fmt.Println("send connect, username: ", username)
 	msg := Message{MessageType_Connect, username, ""}
-	encoder.Encode(msg)
+	session.Connection.encoder.Encode(msg)
 }
 
-func addConnect(msg Message, conn net.Conn) {
+func (session *Session) addConnect(msg Message, conn net.Conn) {
 	mutex.Lock()
 	listIPs[msg.Username] = conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	listConnections[msg.Username] = conn
 	log.Printf("connected confirm from username: %s. ip: %s \n", msg.Username, listIPs[msg.Username])
 	mutex.Unlock()
+	session.ReceivedMsg <- "connected"
 }
 
 //disconnect user by deleting him/her from list
