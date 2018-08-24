@@ -63,28 +63,25 @@ func main() {
 			go func() {
 				time.Sleep(3 * time.Second)
 				if !didReceived {
-					session.Connection.conn.Close()
+					session.Close()
 				}
 			}()
+
 			received := <-session.ReceivedMsg
 
 			if received == "connected" {
 				didReceived = true
 			}
 
-			go func() {
-				for {
-					session.HandleRequest(conn, decoder, encoder)
-				}
-				conn.Close()
-			}()
-
-			go session.handleSendMessage(conn, encoder)
+			go session.ServeConn()
 
 			go func() {
 				for {
 					received := <-session.ReceivedMsg
 					c.Print(received)
+					if received == "exit" {
+						break
+					}
 				}
 			}()
 
@@ -106,29 +103,42 @@ func main() {
 			serve, err := net.Listen("tcp", ":"+strconv.Itoa(servePort))
 			handleErr(err)
 			c.Printf("listen to port : %d \n", servePort)
+			//	ConnList := make(map[net.Conn]*msg.Session, 100)
+			keepWaiting := true
 			// server side wait for connect
+			var session *msg.Session
 			go func() {
-				for {
+				for keepWaiting {
 					conn, err := serve.Accept()
 					handleErr(err)
-					go session.ServeConn(conn)
-				}
-			}()
+					//			if v, ok := ConnList[conn]; ok {
+					//					fmt.Println("accept again")
+					//					session = v
+					//					} else {
+					session = msg.InitSession(username, conn)
+					//					}
 
-			// wait for receive msg
-			go func() {
-				for {
-					received := <-session.ReceivedMsg
-					c.Print(received)
+					go session.ServeConn()
+					// wait for receive msg
+					go func() {
+						for keepWaiting {
+							received := <-session.ReceivedMsg
+							c.Print(received)
+							if received == "exit" {
+								keepWaiting = false
+							}
+						}
+					}()
 				}
 			}()
 
 			// wait for input msg
 			for {
-				//	c.Print("you: ")
+				//c.Print("you: ")
 				txt := c.ReadLine()
 				session.InputMsg <- txt
 				if txt == "exit" {
+					keepWaiting = false
 					break
 				}
 			}

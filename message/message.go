@@ -2,10 +2,16 @@ package message
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"sync"
+)
+
+// Session_Signal
+const (
+	Session_Signal_Exit = -1
 )
 
 /**
@@ -40,7 +46,9 @@ type Session struct {
 	username    string
 	ReceivedMsg chan string
 	InputMsg    chan string
-	Connection  *Connection
+	CurConn     *Connection
+	Signal      chan int
+	close       bool
 }
 
 type Connection struct {
@@ -69,38 +77,73 @@ func InitSession(name string, conn net.Conn) *Session {
 		Myname:      name,
 		ReceivedMsg: make(chan string),
 		InputMsg:    make(chan string),
-		Connection:  connection,
+		CurConn:     connection,
 	}
 	username = name
 	return session
 }
 
-func (session *Session) ServeConn(conn net.Conn) {
-	encoder := json.NewEncoder(conn)
-	decoder := json.NewDecoder(conn)
+func (session *Session) ServeConn() {
 	go func() {
-		for {
-			session.HandleRequest(conn, decoder, encoder)
+		for !session.close {
+			session.HandleRequest()
 		}
 	}()
 
-	go session.handleSendMessage(conn, encoder)
+	go session.handleSendMessage()
+}
+
+func (session *Session) GetCurconn() (curConn *Connection, err error) {
+	if session.CurConn != nil {
+		curConn = session.CurConn
+		return
+	}
+	fmt.Println("connection lose, exit session")
+	//TODO retry logic in some situation
+	session.Close()
+	err = errors.New("session close")
+	return
+}
+
+// Close Session
+func (session *Session) Close() {
+	if session.close {
+		return
+	}
+	session.close = true
+	// close conn
+	if session.CurConn != nil {
+		session.CurConn.conn.Close()
+	}
+	session.Signal <- Session_Signal_Exit
 }
 
 //HandleRquest: handle request from client to server
-func (session *Session) HandleRequest(conn net.Conn, decoder *json.Decoder, encoder *json.Encoder) {
+func (session *Session) HandleRequest() {
 	var msg Message
+	curConn, err := session.GetCurconn()
+	if err != nil {
+		return
+	}
+	decoder := curConn.decoder
 	decoder.Decode(&msg)
-	session.receiveMessage(&msg, conn, encoder)
+	session.receiveMessage(&msg)
 }
 
 func (session *Session) handleReceivedMessage(msg Message) {
 	session.ReceivedMsg <- fmt.Sprintf("%s: %s \n", msg.Username, msg.MsgContent)
 }
 
-func (session *Session) handleSendMessage(conn net.Conn, encoder *json.Encoder) {
-	for {
+func (session *Session) handleSendMessage() {
+	curConn, err := session.GetCurconn()
+	if err != nil {
+		fmt.Println("lose Connection")
+		return
+	}
+	encoder := curConn.encoder
+	for !session.close {
 		txt := <-session.InputMsg
+		session.sendMessage(txt)
 		if txt == "exit" {
 			session.ReceivedMsg <- fmt.Sprintf("you exit session")
 			disconMsg := Message{
@@ -109,14 +152,19 @@ func (session *Session) handleSendMessage(conn net.Conn, encoder *json.Encoder) 
 				"",
 			}
 			encoder.Encode(disconMsg)
-			conn.Close()
+			session.Close()
 			break
 		}
-		sendMessage(txt, encoder)
 	}
 }
 
-func sendMessage(txt string, encoder *json.Encoder) {
+func (session *Session) sendMessage(txt string) {
+	curConn, err := session.GetCurconn()
+	encoder := curConn.encoder
+	if err != nil {
+		fmt.Println("lose Connection")
+		return
+	}
 	msg := Message{MessageType_Private, username, txt}
 	encoder.Encode(msg)
 }
@@ -125,16 +173,22 @@ func handleError(msg *Message) {
 	log.Print(msg.desp())
 }
 
-func (session *Session) receiveMessage(msg *Message, conn net.Conn, encoder *json.Encoder) {
+func (session *Session) receiveMessage(msg *Message) {
+	curConn, err := session.GetCurconn()
+	encoder := curConn.encoder
+	if err != nil {
+		fmt.Println("lose Connection")
+		return
+	}
 	switch msg.Type {
 	case MessageType_Error:
 		handleError(msg)
 	case MessageType_Connect:
-		session.handleNewConnect(*msg, conn, encoder)
+		session.handleNewConnect(*msg)
 	case MessageType_Connected:
-		session.addConnect(*msg, conn)
+		session.addConnect(*msg)
 	case MessageType_Disconnect:
-		session.disconnect(*msg, conn)
+		session.disconnect(*msg)
 	case MessageType_Recieved:
 	//	fmt.Printf("%s received \n", msg.Username)
 	case MessageType_Private:
@@ -162,7 +216,14 @@ func userExist(username string) bool {
 	return false
 }
 
-func (session *Session) handleNewConnect(msg Message, conn net.Conn, encoder *json.Encoder) bool {
+func (session *Session) handleNewConnect(msg Message) bool {
+	curConn, err := session.GetCurconn()
+	if err != nil {
+		fmt.Println("lose Connection")
+		return false
+	}
+	encoder, conn := curConn.encoder, curConn.conn
+
 	response := Message{}
 	if userExist(msg.Username) {
 		response.Type = MessageType_Error
@@ -184,11 +245,24 @@ func (session *Session) handleNewConnect(msg Message, conn net.Conn, encoder *js
 
 func (session *Session) SendConnect() {
 	fmt.Println("send connect, username: ", username)
+	curConn, err := session.GetCurconn()
+	if err != nil {
+		fmt.Println("lose Connection")
+		return
+	}
+	encoder := curConn.encoder
 	msg := Message{MessageType_Connect, username, ""}
-	session.Connection.encoder.Encode(msg)
+	encoder.Encode(msg)
 }
 
-func (session *Session) addConnect(msg Message, conn net.Conn) {
+func (session *Session) addConnect(msg Message) {
+	curConn, err := session.GetCurconn()
+	if err != nil {
+		fmt.Println("lose Connection")
+		return
+	}
+	conn := curConn.conn
+
 	mutex.Lock()
 	listIPs[msg.Username] = conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	listConnections[msg.Username] = conn
@@ -198,12 +272,12 @@ func (session *Session) addConnect(msg Message, conn net.Conn) {
 }
 
 //disconnect user by deleting him/her from list
-func (session *Session) disconnect(msg Message, conn net.Conn) {
+func (session *Session) disconnect(msg Message) {
 	// update list
 	session.ReceivedMsg <- fmt.Sprintf("%s exit session, session close.", msg.Username)
 	mutex.Lock()
 	delete(listIPs, msg.Username)
 	delete(listConnections, msg.Username)
 	mutex.Unlock()
-	conn.Close()
+	session.Close()
 }
