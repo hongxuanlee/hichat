@@ -58,34 +58,21 @@ func main() {
 
 			session := msg.InitSession(username, conn)
 			session.SendConnect()
-			var didReceived bool
-			// if still not received response after 3s
-			go func() {
-				time.Sleep(3 * time.Second)
-				if !didReceived {
-					session.Close()
-				}
-			}()
-
-			received := <-session.ReceivedMsg
-
-			if received == "connected" {
-				didReceived = true
-			}
-
+			keepReading := true
 			go session.ServeConn()
-
 			go func() {
 				for {
 					received := <-session.ReceivedMsg
-					c.Print(received)
 					if received == "exit" {
-						break
+						c.Printf("%s quit session, you could start another call...\n", session.Username)
+						keepReading = false
+						return
 					}
+					c.Print(received)
 				}
 			}()
 
-			for {
+			for keepReading {
 				txt := c.ReadLine()
 				session.InputMsg <- txt
 				if txt == "exit" {
@@ -103,7 +90,6 @@ func main() {
 			serve, err := net.Listen("tcp", ":"+strconv.Itoa(servePort))
 			handleErr(err)
 			c.Printf("listen to port : %d \n", servePort)
-			//	ConnList := make(map[net.Conn]*msg.Session, 100)
 			keepWaiting := true
 			// server side wait for connect
 			var session *msg.Session
@@ -111,22 +97,17 @@ func main() {
 				for keepWaiting {
 					conn, err := serve.Accept()
 					handleErr(err)
-					//			if v, ok := ConnList[conn]; ok {
-					//					fmt.Println("accept again")
-					//					session = v
-					//					} else {
 					session = msg.InitSession(username, conn)
-					//					}
-
 					go session.ServeConn()
 					// wait for receive msg
 					go func() {
-						for keepWaiting {
+						for {
 							received := <-session.ReceivedMsg
-							c.Print(received)
 							if received == "exit" {
-								keepWaiting = false
+								c.Printf("%s quit session, keep waiting for others call...\n", session.Username)
+								return
 							}
+							c.Print(received)
 						}
 					}()
 				}
@@ -138,7 +119,10 @@ func main() {
 				txt := c.ReadLine()
 				session.InputMsg <- txt
 				if txt == "exit" {
+					time.Sleep(2 * time.Second)
 					keepWaiting = false
+					session.Close()
+					serve.Close()
 					break
 				}
 			}

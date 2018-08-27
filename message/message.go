@@ -15,7 +15,7 @@ const (
 )
 
 /**
-*  send and receive message
+*  Send and receive message
 **/
 const (
 	MessageType_Connect    = 1
@@ -43,7 +43,7 @@ type Message struct {
 
 type Session struct {
 	Myname      string
-	username    string
+	Username    string
 	ReceivedMsg chan string
 	InputMsg    chan string
 	CurConn     *Connection
@@ -145,7 +145,7 @@ func (session *Session) handleSendMessage() {
 		txt := <-session.InputMsg
 		session.sendMessage(txt)
 		if txt == "exit" {
-			session.ReceivedMsg <- fmt.Sprintf("you exit session")
+			session.ReceivedMsg <- fmt.Sprintf("you exit session\n")
 			disconMsg := Message{
 				MessageType_Disconnect,
 				username,
@@ -192,7 +192,6 @@ func (session *Session) receiveMessage(msg *Message) {
 	case MessageType_Recieved:
 	//	fmt.Printf("%s received \n", msg.Username)
 	case MessageType_Private:
-		//fmt.Println("receive private msg", msg.desp())
 		session.handleReceivedMessage(*msg)
 		received := Message{
 			MessageType_Recieved,
@@ -223,8 +222,8 @@ func (session *Session) handleNewConnect(msg Message) bool {
 		return false
 	}
 	encoder, conn := curConn.encoder, curConn.conn
-
 	response := Message{}
+
 	if userExist(msg.Username) {
 		response.Type = MessageType_Error
 		response.Username = username
@@ -232,6 +231,7 @@ func (session *Session) handleNewConnect(msg Message) bool {
 		encoder.Encode(response)
 		return false
 	}
+	session.Username = msg.Username
 	mutex.Lock()
 	listIPs[msg.Username] = conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	listConnections[msg.Username] = conn
@@ -256,25 +256,25 @@ func (session *Session) SendConnect() {
 }
 
 func (session *Session) addConnect(msg Message) {
+	fmt.Println("add connect")
 	curConn, err := session.GetCurconn()
 	if err != nil {
 		fmt.Println("lose Connection")
 		return
 	}
 	conn := curConn.conn
-
+	session.Username = msg.Username
 	mutex.Lock()
 	listIPs[msg.Username] = conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	listConnections[msg.Username] = conn
-	log.Printf("connected confirm from username: %s. ip: %s \n", msg.Username, listIPs[msg.Username])
+	fmt.Printf("connected confirm from username: %s. ip: %s \n", msg.Username, listIPs[msg.Username])
 	mutex.Unlock()
-	session.ReceivedMsg <- "connected"
 }
 
 //disconnect user by deleting him/her from list
 func (session *Session) disconnect(msg Message) {
 	// update list
-	session.ReceivedMsg <- fmt.Sprintf("%s exit session, session close.", msg.Username)
+	session.ReceivedMsg <- "exit"
 	mutex.Lock()
 	delete(listIPs, msg.Username)
 	delete(listConnections, msg.Username)
