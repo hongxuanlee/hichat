@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	msg "github.com/hongxuanlee/hichat/message"
+	util "github.com/hongxuanlee/hichat/util"
 	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
@@ -20,22 +22,38 @@ func handleErr(err error) {
 	}
 }
 
-func main() {
-	if len(os.Args) <= 2 || len(os.Args[2]) == 0 {
-		fmt.Println("username required....")
-		os.Exit(1)
+func getConfig() (config *util.Config, err error) {
+	config, err = util.GetConfigFromFile()
+	if err != nil && len(os.Args) < 2 {
+		err = errors.New("get config error")
+		return
 	}
-	username := os.Args[2]
-	var servePort int
-	var err error
-	if len(os.Args) > 3 {
-		servePort, err = strconv.Atoi(os.Args[3])
+	if len(os.Args) > 1 {
+		config.Username = os.Args[1]
+	}
+	var serverPort int
+	if len(os.Args) > 2 {
+		serverPort, err = strconv.Atoi(os.Args[2])
 		if err != nil {
 			fmt.Printf("input serve port wrong: %s", err)
+			return
 		}
-	} else {
-		servePort = PORT
+		config.ServerPort = serverPort
 	}
+	if config.ServerPort < 1 {
+		config.ServerPort = PORT
+	}
+	return
+}
+
+func main() {
+	config, err := getConfig()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	username := config.Username
+	servePort := config.ServerPort
 
 	// create new shell.
 	shell := ishell.New()
@@ -115,7 +133,6 @@ func main() {
 
 			// wait for input msg
 			for {
-				//c.Print("you: ")
 				txt := c.ReadLine()
 				session.InputMsg <- txt
 				if txt == "exit" {
