@@ -1,5 +1,6 @@
 ## Hichat
-###A p2p chat in terminal
+
+### A p2p chat in terminal
 
 #### Install deps
 
