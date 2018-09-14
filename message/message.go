@@ -131,6 +131,7 @@ func (session *Session) HandleRequest() {
 }
 
 func (session *Session) handleReceivedMessage(msg Message) {
+	Notify(msg.MsgContent)
 	session.ReceivedMsg <- fmt.Sprintf("%s: %s \n", msg.Username, msg.MsgContent)
 }
 
