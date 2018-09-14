@@ -13,7 +13,7 @@ import (
 func Notify(msg string) error {
 	log.Print(runtime.GOOS)
 	if runtime.GOOS == "darwin" {
-		cmd := exec.Command("osascript", "-e", "display notification \"Hello world!\" with title \"Hi!\"")
+		cmd := exec.Command("osascript", "-e", "display notification \"Hello world!\" with title \""+msg+"!\"")
 		err := cmd.Run()
 		if err != nil {
 			return err
