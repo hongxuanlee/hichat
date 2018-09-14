@@ -6,7 +6,8 @@ deps:
 	@go get -u gopkg.in/abiosoft/ishell.v2 
 
 build:
-	@go build -o ${GOPATH}/bin/hichat ./
+	@GOOS=linux GOARCH=amd64 go build -o bin/linux-amd64/hichat ./
+	@GOOS=darwin GOARCH=amd64 go build -o bin/darwin-amd64/hichat ./
 	@cp config.json ~/.hichat_conf.json
 
 clean:

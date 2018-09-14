@@ -1,5 +1,7 @@
 *.swp
-bin
+*.swo
+*.swn
+*.DS_Store
 # Binaries for programs and plugins
 *.exe
 *.exe~
