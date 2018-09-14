@@ -6,7 +6,7 @@ deps:
 	@go get -u gopkg.in/abiosoft/ishell.v2 
 
 build:
-	@go build -o bin/hichat ./
+	@go build -o ${GOPATH}/bin/hichat ./
 	@cp config.json ~/.hichat_conf.json
 
 clean:
